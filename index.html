@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Minesweeper - FreePlay</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{width:100%;height:100%;overflow:hidden}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;
+  background:#1a1a2e;color:#e0e0e0;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  height:100vh;padding:8px;gap:8px;
+}
+h1{font-size:1.2rem;font-weight:800;color:#e94560;letter-spacing:.12em;text-transform:uppercase}
+.sub{font-size:.55rem;color:#555;letter-spacing:.1em;text-transform:uppercase}
+.topbar{display:flex;align-items:center;justify-content:space-between;width:100%;max-width:400px}
+.info{display:flex;gap:12px;align-items:center}
+.info-box{font-family:monospace;font-size:1rem;font-weight:700;color:#e94560;background:#16213e;padding:4px 10px;border-radius:6px}
+.dbtn{display:flex;gap:4px}
+.dbtn button{font-family:inherit;font-size:.6rem;font-weight:700;padding:4px 8px;border:none;border-radius:14px;background:#16213e;color:#888;text-transform:uppercase}
+.dbtn button.on{background:#e94560;color:#fff}
+
+.actions{display:flex;gap:6px}
+.actions button{font-family:inherit;font-size:.7rem;font-weight:700;padding:6px 12px;border:none;border-radius:16px;background:#16213e;color:#aaa}
+.actions button.on{background:#e94560;color:#fff}
+
+/* BOARD */
+.board{
+  display:grid;gap:2px;
+  width:100%;max-width:400px;
+}
+.cell{
+  aspect-ratio:1;
+  display:flex;align-items:center;justify-content:center;
+  font-size:clamp(.7rem,3vw,1rem);font-weight:800;
+  background:#16213e;border-radius:3px;
+  cursor:pointer;user-select:none;-webkit-user-select:none;
+  transition:background 0.1s;
+}
+.cell.revealed{background:#0e0e1a}
+.cell.mine-hit{background:#c0392b!important}
+.cell.flagged{background:#16213e}
+.c1{color:#4fc3f7}.c2{color:#2ecc71}.c3{color:#e94560}.c4{color:#9b59b6}
+.c5{color:#f39c12}.c6{color:#1abc9c}.c7{color:#fff}.c8{color:#aaa}
+
+/* OVERLAY */
+.ov{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(26,26,46,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:10;visibility:hidden;opacity:0}
+.ov.show{visibility:visible;opacity:1}
+.ov h2{font-size:1.6rem;color:#e94560;font-weight:800}
+.ov p{color:#888;font-size:.95rem}
+.ov button{font-family:inherit;padding:12px 28px;border:none;border-radius:30px;background:#e94560;color:#fff;font-size:1rem;font-weight:700;cursor:pointer}
+</style>
+</head>
+<body>
+<h1>Minesweeper</h1>
+<div class="sub">FreePlay · No Ads</div>
+
+<div class="topbar">
+  <div class="dbtn" id="db">
+    <button data-d="easy" class="on">Easy</button>
+    <button data-d="med">Med</button>
+    <button data-d="hard">Hard</button>
+  </div>
+  <div class="info">
+    <div class="info-box" id="mineCount">💣 10</div>
+    <div class="info-box" id="timer">⏱ 0</div>
+  </div>
+</div>
+
+<div class="actions">
+  <button id="flagBtn">🚩 Flag Mode</button>
+  <button id="newBtn">↻ New</button>
+</div>
+
+<div class="board" id="board"></div>
+
+<div class="ov" id="ov">
+  <h2 id="ovT"></h2>
+  <p id="ovM"></p>
+  <button id="ovB">Play Again</button>
+</div>
+
+<script>
+(function(){
+  var CONFIGS={
+    easy:{rows:9,cols:9,mines:10},
+    med:{rows:12,cols:10,mines:25},
+    hard:{rows:14,cols:10,mines:40}
+  };
+  var diff='easy',rows,cols,mines,grid,revealed,flagged,flagMode,gameOver,firstClick;
+  var timerSec,timerInt;
+  var boardEl=document.getElementById('board');
+
+  function init(d){
+    if(d)diff=d;
+    var cfg=CONFIGS[diff];
+    rows=cfg.rows;cols=cfg.cols;mines=cfg.mines;
+    grid=[];revealed=[];flagged=[];
+    flagMode=false;gameOver=false;firstClick=true;
+    document.getElementById('flagBtn').className='';
+    if(timerInt)clearInterval(timerInt);
+    timerSec=0;
+    document.getElementById('timer').textContent='⏱ 0';
+    document.getElementById('mineCount').textContent='💣 '+mines;
+    document.getElementById('ov').className='ov';
+    updDiff();
+
+    var r,c;
+    for(r=0;r<rows;r++){
+      grid[r]=[];revealed[r]=[];flagged[r]=[];
+      for(c=0;c<cols;c++){grid[r][c]=0;revealed[r][c]=false;flagged[r][c]=false;}
+    }
+
+    boardEl.style.gridTemplateColumns='repeat('+cols+',1fr)';
+    boardEl.innerHTML='';
+    for(r=0;r<rows;r++){
+      for(c=0;c<cols;c++){
+        var cell=document.createElement('div');
+        cell.className='cell';
+        cell.setAttribute('data-r',r);
+        cell.setAttribute('data-c',c);
+        boardEl.appendChild(cell);
+      }
+    }
+    render();
+  }
+
+  function placeMines(sr,sc){
+    var placed=0,r,c;
+    while(placed<mines){
+      r=Math.floor(Math.random()*rows);
+      c=Math.floor(Math.random()*cols);
+      if(grid[r][c]===-1)continue;
+      if(Math.abs(r-sr)<=1&&Math.abs(c-sc)<=1)continue;
+      grid[r][c]=-1;placed++;
+    }
+    /* Calc numbers */
+    for(r=0;r<rows;r++){
+      for(c=0;c<cols;c++){
+        if(grid[r][c]===-1)continue;
+        var count=0;
+        for(var dr=-1;dr<=1;dr++)for(var dc=-1;dc<=1;dc++){
+          var nr=r+dr,nc=c+dc;
+          if(nr>=0&&nr<rows&&nc>=0&&nc<cols&&grid[nr][nc]===-1)count++;
+        }
+        grid[r][c]=count;
+      }
+    }
+  }
+
+  function reveal(r,c){
+    if(r<0||r>=rows||c<0||c>=cols)return;
+    if(revealed[r][c]||flagged[r][c])return;
+    revealed[r][c]=true;
+    if(grid[r][c]===0){
+      for(var dr=-1;dr<=1;dr++)for(var dc=-1;dc<=1;dc++)reveal(r+dr,c+dc);
+    }
+  }
+
+  function handleClick(r,c){
+    if(gameOver)return;
+    if(firstClick){
+      placeMines(r,c);
+      firstClick=false;
+      timerInt=setInterval(function(){timerSec++;document.getElementById('timer').textContent='⏱ '+timerSec;},1000);
+    }
+
+    if(flagMode){
+      if(revealed[r][c])return;
+      flagged[r][c]=!flagged[r][c];
+      var fc=0;for(var rr=0;rr<rows;rr++)for(var cc=0;cc<cols;cc++)if(flagged[rr][cc])fc++;
+      document.getElementById('mineCount').textContent='💣 '+(mines-fc);
+      render();return;
+    }
+
+    if(flagged[r][c])return;
+
+    if(grid[r][c]===-1){
+      /* Hit mine */
+      gameOver=true;clearInterval(timerInt);
+      revealed[r][c]=true;
+      /* Reveal all mines */
+      for(var rr=0;rr<rows;rr++)for(var cc=0;cc<cols;cc++)if(grid[rr][cc]===-1)revealed[rr][cc]=true;
+      render();
+      /* Mark hit cell */
+      var idx=r*cols+c;
+      boardEl.children[idx].className='cell revealed mine-hit';
+      setTimeout(function(){
+        document.getElementById('ovT').textContent='💥 Game Over';
+        document.getElementById('ovM').textContent='You hit a mine! Time: '+timerSec+'s';
+        document.getElementById('ov').className='ov show';
+      },500);
+      return;
+    }
+
+    reveal(r,c);
+    render();
+    checkWin();
+  }
+
+  function checkWin(){
+    var count=0;
+    for(var r=0;r<rows;r++)for(var c=0;c<cols;c++)if(revealed[r][c])count++;
+    if(count===rows*cols-mines){
+      gameOver=true;clearInterval(timerInt);
+      setTimeout(function(){
+        document.getElementById('ovT').textContent='🎉 You Win!';
+        document.getElementById('ovM').textContent='Cleared in '+timerSec+' seconds!';
+        document.getElementById('ov').className='ov show';
+      },300);
+    }
+  }
+
+  function render(){
+    for(var r=0;r<rows;r++){
+      for(var c=0;c<cols;c++){
+        var idx=r*cols+c;
+        var cell=boardEl.children[idx];
+        if(revealed[r][c]){
+          cell.className='cell revealed';
+          if(grid[r][c]===-1){cell.textContent='💣';}
+          else if(grid[r][c]>0){cell.textContent=grid[r][c];cell.className+=' c'+grid[r][c];}
+          else{cell.textContent='';}
+        }else if(flagged[r][c]){
+          cell.className='cell flagged';cell.textContent='🚩';
+        }else{
+          cell.className='cell';cell.textContent='';
+        }
+      }
+    }
+  }
+
+  function updDiff(){
+    var bs=document.getElementById('db').children,i;
+    for(i=0;i<bs.length;i++)bs[i].className=bs[i].getAttribute('data-d')===diff?'on':'';
+  }
+
+  /* Events */
+  boardEl.addEventListener('click',function(e){
+    var t=e.target;
+    if(!t.hasAttribute('data-r'))return;
+    handleClick(parseInt(t.getAttribute('data-r')),parseInt(t.getAttribute('data-c')));
+  });
+
+  /* Long press for flag on mobile */
+  var longTimer=null;
+  boardEl.addEventListener('touchstart',function(e){
+    var t=e.target;
+    if(!t.hasAttribute('data-r'))return;
+    longTimer=setTimeout(function(){
+      var r=parseInt(t.getAttribute('data-r'));
+      var c=parseInt(t.getAttribute('data-c'));
+      if(!revealed[r][c]&&!gameOver){
+        flagged[r][c]=!flagged[r][c];
+        var fc=0;for(var rr=0;rr<rows;rr++)for(var cc=0;cc<cols;cc++)if(flagged[rr][cc])fc++;
+        document.getElementById('mineCount').textContent='💣 '+(mines-fc);
+        render();
+      }
+      longTimer='fired';
+    },400);
+  },{passive:true});
+  boardEl.addEventListener('touchend',function(e){
+    if(longTimer==='fired'){longTimer=null;e.preventDefault();return;}
+    if(longTimer){clearTimeout(longTimer);longTimer=null;}
+  });
+
+  document.getElementById('flagBtn').addEventListener('click',function(){
+    flagMode=!flagMode;
+    this.className=flagMode?'on':'';
+  });
+  document.getElementById('newBtn').addEventListener('click',function(){init();});
+  document.getElementById('ovB').addEventListener('click',function(){init();});
+
+  var dbs=document.getElementById('db').children,di;
+  for(di=0;di<dbs.length;di++){
+    dbs[di].addEventListener('click',(function(b){return function(){init(b.getAttribute('data-d'));};})(dbs[di]));
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
